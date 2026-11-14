@@ -1,14 +1,9 @@
 {
   "functions": {
-    "api/[...slug].js": {
-      "includeFiles": "server/schema.sql",
-      "maxDuration": 30
-    }
+    "api/index.js": { "includeFiles": "server/schema.sql", "maxDuration": 30 }
   },
   "rewrites": [
-    {
-      "source": "/((?!api/).*)",
-      "destination": "/index.html"
-    }
+    { "source": "/api/(.*)", "destination": "/api" },
+    { "source": "/((?!api).*)", "destination": "/index.html" }
   ]
 }

@@ -44,7 +44,7 @@ Reset or add an admin later with `npm run create-admin -- you@example.com NewPas
 ### Vercel
 
 The repo also deploys to Vercel as-is: the site is built to `dist`, and every `/api/*` call runs the
-same Express app as a serverless function (`api/[...slug].js`, config in `vercel.json`).
+same Express app as a serverless function (`api/index.js`, config in `vercel.json`).
 Set `DATABASE_URL` (use Neon's pooled string), `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD` in
 Project → Settings → Environment Variables, then redeploy. Vercel limits request bodies to ~4.5 MB,
 so upload photos in the admin (they are resized automatically) and host large videos as files in
@@ -52,7 +52,7 @@ so upload photos in the admin (they are resized automatically) and host large vi
 
 ## Project layout
 
-- `server/app.js` – Express API (content draft/publish, revisions, booking, media, admin auth); `server/index.js` starts it as a normal server; `api/[...slug].js` runs it on Vercel
+- `server/app.js` – Express API (content draft/publish, revisions, booking, media, admin auth); `server/index.js` starts it as a normal server; `api/index.js` runs it on Vercel
 - `server/schema.sql` – PostgreSQL schema (idempotent)
 - `src/lib/store.js` – front-end data layer (calls `/api`)
 - `src/lib/defaultContent.js` – seed copy; everything is editable in the admin
