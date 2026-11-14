@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
-import { getSession, signIn, signOut, resetPassword, hasSupabase } from '../lib/store'
+import { getSession, signIn, signOut } from '../lib/store'
 import { AdminProvider, useAdmin } from './shared'
 import Dashboard from './Dashboard'
 import { ContentPage, SectionsPage, TreatmentsPage, DoctorPage, StaffPage, TestimonialsPage, FaqPage, SeoPage, SettingsPage } from './Editors'
@@ -23,14 +23,13 @@ function Login({ onDone }) {
   }
   async function reset() {
     setErr(''); setInfo('')
-    try { await resetPassword(email); setInfo('Password reset email sent.') } catch (x) { setErr(x.message) }
+    setInfo('To reset the password, run on the server: npm run create-admin -- <email> <new-password>')
   }
   return (
     <div className="grid min-h-screen place-items-center bg-slate-100 p-4">
       <form onSubmit={go} className="a-card w-full max-w-sm space-y-4">
         <div><h1 className="!font-body text-xl font-bold">ENDO EXPERT Admin</h1><p className="text-sm text-slate-500">Sign in to manage the website</p></div>
-        {!hasSupabase && <p className="rounded-lg bg-amber-50 p-3 text-xs text-amber-800">Demo mode: Supabase is not configured. Data is stored in this browser only. Default password is set by VITE_DEMO_ADMIN_PASSWORD.</p>}
-        <label className="block"><span className="a-label">Email</span><input type="email" className="a-input" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" required={hasSupabase} /></label>
+        <label className="block"><span className="a-label">Email</span><input type="email" className="a-input" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" required /></label>
         <label className="block"><span className="a-label">Password</span><input type="password" className="a-input" value={pw} onChange={(e) => setPw(e.target.value)} autoComplete="current-password" required /></label>
         {err && <p className="text-sm font-medium text-red-600" role="alert">{err}</p>}
         {info && <p className="text-sm font-medium text-green-700">{info}</p>}

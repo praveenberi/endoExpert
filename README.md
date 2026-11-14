@@ -1,30 +1,59 @@
-# ENDO EXPERT – MICROENDODONTICS
+# ENDO EXPERT – Microendodontics website
 
-Public website + admin CMS, built from the shared ChatGPT spec.
-Stack: React + Vite, Tailwind CSS, Framer Motion, Three.js (React Three Fiber), Supabase (Auth, Postgres, Storage).
+React + Vite (Tailwind, Framer Motion, Three.js) front end with an admin CMS, backed by an
+**Express API and PostgreSQL**. Content, appointments, admin accounts and uploaded photos/videos
+all live in PostgreSQL – no other services are needed.
 
-```bash
-npm install
-npm run dev        # http://localhost:5173  (admin at /admin)
-npm run build
-```
+## Run locally
 
-## Two modes
-- **Demo mode (default)** – no setup. Content, appointments and images live in browser localStorage.
-  Admin password = `VITE_DEMO_ADMIN_PASSWORD` (default `admin123`). Demo only – not secure.
-- **Supabase mode** – copy `.env.example` to `.env`, fill `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`, then:
-  1. Run `supabase/schema.sql` in the Supabase SQL editor (tables, RLS, booking RPCs, `media` storage bucket).
-  2. Authentication → Users → create the admin user.
-  3. `insert into admin_users (user_id, role) values ('<user uuid>', 'admin');`
-  4. Authentication → URL config: add your site URL (needed for password reset).
+1. Create a **UTF-8** PostgreSQL database, e.g. `createdb endoexpert`.
+2. `cp .env.example .env` and fill in `DATABASE_URL`, `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`
+   (quote values containing `#` or spaces).
+3. Install and start both processes:
+   ```bash
+   npm install
+   npm run server     # API on :4000 – creates tables and the first admin on start
+   npm run dev        # site on http://localhost:5173 (proxies /api to :4000)
+   ```
+4. Admin: <http://localhost:5173/admin> – sign in with `ADMIN_EMAIL` / `ADMIN_PASSWORD`.
 
-## What is where
-- `src/pages` public pages · `src/components` sections, 3D tooth, magnification explorer, booking form
-- `src/admin` dashboard: page content, sections & layout (drag reorder / hide / delete / add), media library,
-  treatments, doctor, appointments, testimonials, FAQs, SEO, settings (branding, contact, hours), live preview, version history
-- `src/lib/defaultContent.js` seed copy (all editable in admin) · `src/lib/store.js` data layer (Supabase or local)
-- Draft → Publish workflow: edits auto-save to a draft; **Publish** makes them live and stores a restorable revision.
+## Deploy (single Node service)
 
-## Content you must supply (nothing is invented)
-Doctor qualifications/experience/memberships, clinic address, phone/WhatsApp/email, map URL, photos, and real testimonials.
-The testimonials section stays hidden until you add genuine ones. Sundays can never be booked.
+The Express server serves both the API and the built site.
+
+| Setting | Value |
+|---|---|
+| Build command | `npm install && npm run build` |
+| Start command | `npm start` |
+| Node | 18 or newer |
+
+Environment variables:
+
+| Variable | Required | Notes |
+|---|---|---|
+| `DATABASE_URL` | yes | PostgreSQL connection string (Render, Railway, Neon, Supabase-as-plain-Postgres, RDS …) |
+| `JWT_SECRET` | yes | Long random string, signs admin login tokens |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | first run | Creates the first admin if that email doesn't exist yet |
+| `NODE_ENV` | recommended | `production` (SSL to the database is then enabled automatically for non-local hosts) |
+| `DATABASE_SSL` | optional | `true` / `false` to force SSL on or off |
+| `PORT` | optional | Most hosts set this for you |
+
+Tables are created automatically from `server/schema.sql` when the server starts.
+Reset or add an admin later with `npm run create-admin -- you@example.com NewPassword`.
+
+## Project layout
+
+- `server/index.js` – API (content draft/publish, revisions, booking, media, admin auth) and static hosting
+- `server/schema.sql` – PostgreSQL schema (idempotent)
+- `src/lib/store.js` – front-end data layer (calls `/api`)
+- `src/lib/defaultContent.js` – seed copy; everything is editable in the admin
+- `src/components/` – public sections, 3D tooth mascot, booking form · `src/admin/` – CMS pages
+
+## Notes
+
+- Sunday bookings are blocked on both the form and the server; slots follow the opening hours in
+  Admin → Website Settings. One active booking per time slot is enforced by a database index.
+- Admin changes autosave to a draft; **Publish** makes them live and keeps version history.
+- Uploads are stored in PostgreSQL (`media` table, up to 60 MB each). Larger videos can be
+  referenced by URL instead.
+- Testimonials are empty by default – only add real patient reviews.

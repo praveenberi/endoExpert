@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { listAppointments, listMedia, hasSupabase } from '../lib/store'
+import { listAppointments, listMedia } from '../lib/store'
 import { useAdmin, Card, PageTitle } from './shared'
 
 export default function Dashboard() {
@@ -14,7 +14,7 @@ export default function Dashboard() {
   const upcoming = appts.filter((a) => a.date >= today && ['pending', 'confirmed'].includes(a.status)).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)).slice(0, 6)
   return (
     <>
-      <PageTitle sub={`${hasSupabase ? 'Connected to Supabase' : 'Demo mode – data stored in this browser'} · ${dirty ? 'You have unpublished changes' : 'Website is up to date'}`}>Dashboard</PageTitle>
+      <PageTitle sub={`${dirty ? 'You have unpublished changes' : 'Website is up to date'}`}>Dashboard</PageTitle>
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {stat('Pending appointments', appts.filter((a) => a.status === 'pending').length, '../appointments')}
         {stat('Upcoming confirmed', appts.filter((a) => a.status === 'confirmed' && a.date >= today).length, '../appointments')}

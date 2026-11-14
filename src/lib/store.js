@@ -1,17 +1,5 @@
-// Data layer. Uses Supabase when configured (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY),
-// otherwise falls back to browser localStorage so the whole product is demo-able offline.
-import { createClient } from '@supabase/supabase-js'
+// Data layer: talks to the Express + PostgreSQL API in /server (same origin; proxied to :4000 by Vite in dev).
 import { defaultContent } from './defaultContent'
-
-const URL = import.meta.env.VITE_SUPABASE_URL
-const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
-export const hasSupabase = Boolean(URL && KEY)
-export const sb = hasSupabase ? createClient(URL, KEY) : null
-
-const LS = {
-  get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d } catch { return d } },
-  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)) } catch (e) { throw new Error('Local storage is full – use smaller images or configure Supabase.') } },
-}
 
 export function mergeDeep(base, over) {
   if (Array.isArray(base) || Array.isArray(over)) return over === undefined ? base : over
@@ -41,139 +29,76 @@ const withDefaults = (c) => mergeDeep(structuredClone(defaultContent), migrate(c
 const uid = () => Math.random().toString(36).slice(2, 10)
 export const newId = (p = 'id') => `${p}${uid()}`
 
+/* ───────────── API client (Express + PostgreSQL) ───────────── */
+const TOKEN_KEY = 'ee_token'
+const token = { get: () => { try { return localStorage.getItem(TOKEN_KEY) } catch { return null } }, set: (t) => { try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY) } catch {} } }
+async function api(path, { method = 'GET', body, raw, headers = {}, auth = false } = {}) {
+  const h = { ...headers }
+  if (auth && token.get()) h.Authorization = 'Bearer ' + token.get()
+  if (body !== undefined) h['Content-Type'] = 'application/json'
+  let res
+  try { res = await fetch('/api' + path, { method, headers: h, body: raw ?? (body !== undefined ? JSON.stringify(body) : undefined) }) }
+  catch { throw new Error('Cannot reach the server. Please check your connection and try again.') }
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    if (res.status === 401 && auth) token.set(null)
+    throw new Error(data.error || 'Request failed (' + res.status + ')')
+  }
+  return data
+}
+const A = { auth: true }
+
 /* ───────────── Content ───────────── */
 export async function getPublished() {
-  if (!hasSupabase) return withDefaults(LS.get('ee_published', null))
-  const { data } = await sb.from('site_content').select('published').eq('id', 1).maybeSingle()
-  return withDefaults(data?.published)
+  const { content } = await api('/content/published')
+  return withDefaults(content)
 }
 export async function getDraft() {
-  if (!hasSupabase) return withDefaults(LS.get('ee_draft', null) || LS.get('ee_published', null))
-  const { data } = await sb.from('site_content').select('draft,published').eq('id', 1).maybeSingle()
-  return withDefaults(data?.draft || data?.published)
+  const { draft, published } = await api('/content/draft', A)
+  return withDefaults(draft || published)
 }
-export async function saveDraft(content) {
-  if (!hasSupabase) { LS.set('ee_draft', content); return }
-  const { error } = await sb.from('site_content').upsert({ id: 1, draft: content, updated_at: new Date().toISOString() })
-  if (error) throw error
-}
-export async function publish(content, label = 'Published') {
-  const entry = { id: newId('r'), label, created_at: new Date().toISOString(), content }
-  if (!hasSupabase) {
-    LS.set('ee_published', content); LS.set('ee_draft', content)
-    LS.set('ee_revisions', [entry, ...LS.get('ee_revisions', [])].slice(0, 15))
-    return
-  }
-  const { error } = await sb.from('site_content').upsert({ id: 1, draft: content, published: content, updated_at: entry.created_at })
-  if (error) throw error
-  await sb.from('content_revisions').insert({ label, content })
-}
-export async function listRevisions() {
-  if (!hasSupabase) return LS.get('ee_revisions', [])
-  const { data } = await sb.from('content_revisions').select('id,label,created_at,content').order('created_at', { ascending: false }).limit(25)
-  return data || []
-}
+export const saveDraft = (content) => api('/content/draft', { ...A, method: 'PUT', body: { content } })
+export const publish = (content, label = 'Published') => api('/content/publish', { ...A, method: 'POST', body: { content, label } })
+export const listRevisions = () => api('/revisions', A)
 export async function hasUnpublished() {
   const [d, p] = await Promise.all([getDraft(), getPublished()])
   return JSON.stringify(d) !== JSON.stringify(p)
 }
 
 /* ───────────── Auth ───────────── */
-const DEMO_PW = import.meta.env.VITE_DEMO_ADMIN_PASSWORD || 'admin123'
 export async function getSession() {
-  if (hasSupabase) { const { data } = await sb.auth.getSession(); return data.session ? { email: data.session.user.email } : null }
-  return LS.get('ee_session', null)
+  if (!token.get()) return null
+  try { return await api('/auth/me', A) } catch { return null }
 }
 export async function signIn(email, password) {
-  if (hasSupabase) {
-    const { data, error } = await sb.auth.signInWithPassword({ email, password })
-    if (error) throw error
-    const { data: ok } = await sb.rpc('is_admin')
-    if (!ok) { await sb.auth.signOut(); throw new Error('This account does not have admin access.') }
-    return { email: data.user.email }
-  }
-  if (password !== DEMO_PW) throw new Error('Incorrect password (demo mode).')
-  const s = { email: email || 'admin@demo', demo: true }
-  LS.set('ee_session', s); return s
+  const r = await api('/auth/login', { method: 'POST', body: { email, password } })
+  token.set(r.token); return { email: r.email }
 }
-export async function signOut() { if (hasSupabase) await sb.auth.signOut(); else localStorage.removeItem('ee_session') }
-export async function resetPassword(email) {
-  if (!hasSupabase) throw new Error('Password reset needs Supabase. In demo mode, change VITE_DEMO_ADMIN_PASSWORD in .env.')
-  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: `${location.origin}/admin/login` })
-  if (error) throw error
-}
+export async function signOut() { token.set(null) }
+export const changePassword = (current, next) => api('/auth/change-password', { ...A, method: 'POST', body: { current, next } })
 
 /* ───────────── Appointments ───────────── */
-const refCode = () => Math.random().toString(36).slice(2, 8).toUpperCase()
-const norm = (m) => (m || '').replace(/\D/g, '')
-
+const norm = (m) => (m || '').replace(/D/g, '')
 export async function createAppointment(a) {
-  if (hasSupabase) {
-    const { data, error } = await sb.rpc('create_appointment', {
-      p_name: a.name, p_mobile: a.mobile, p_email: a.email || '', p_treatment: a.treatment || '',
-      p_date: a.date, p_time: a.time, p_message: a.message || '',
-    })
-    if (error) throw new Error(error.message.includes('slot') ? 'That slot has just been taken – please choose another.' : error.message)
-    return data
-  }
-  const list = LS.get('ee_appts', [])
-  if (list.some((x) => x.date === a.date && x.time === a.time && !['cancelled', 'rejected'].includes(x.status)))
-    throw new Error('That slot has just been taken – please choose another.')
-  const ref = refCode()
-  list.push({ id: newId('a'), ref, ...a, mobile: norm(a.mobile), status: 'pending', created_at: new Date().toISOString() })
-  LS.set('ee_appts', list); return ref
+  const r = await api('/appointments', { method: 'POST', body: a })
+  return r.ref
 }
-export async function bookedSlots(date) {
-  if (hasSupabase) { const { data } = await sb.rpc('booked_slots', { p_date: date }); return (data || []).map((r) => (typeof r === 'string' ? r : r.slot_time).slice(0, 5)) }
-  return LS.get('ee_appts', []).filter((x) => x.date === date && !['cancelled', 'rejected'].includes(x.status)).map((x) => x.time)
-}
-export async function listAppointments() {
-  if (hasSupabase) { const { data, error } = await sb.from('appointments').select('*').order('date').order('time'); if (error) throw error; return data }
-  return LS.get('ee_appts', [])
-}
-export async function updateAppointment(id, patch) {
-  if (hasSupabase) { const { error } = await sb.from('appointments').update(patch).eq('id', id); if (error) throw error; return }
-  LS.set('ee_appts', LS.get('ee_appts', []).map((x) => (x.id === id ? { ...x, ...patch } : x)))
-}
-export async function lookupAppointment(ref, mobile) {
-  if (hasSupabase) { const { data } = await sb.rpc('lookup_appointment', { p_ref: ref.trim().toUpperCase(), p_mobile: norm(mobile) }); return data?.[0] || null }
-  return LS.get('ee_appts', []).find((x) => x.ref === ref.trim().toUpperCase() && norm(x.mobile) === norm(mobile)) || null
-}
-export async function cancelOwnAppointment(ref, mobile) {
-  if (hasSupabase) { const { error } = await sb.rpc('cancel_appointment', { p_ref: ref.trim().toUpperCase(), p_mobile: norm(mobile) }); if (error) throw error; return }
-  const l = LS.get('ee_appts', [])
-  LS.set('ee_appts', l.map((x) => (x.ref === ref.trim().toUpperCase() && norm(x.mobile) === norm(mobile) ? { ...x, status: 'cancelled' } : x)))
-}
+export const bookedSlots = (date) => api('/appointments/booked?date=' + encodeURIComponent(date))
+export const listAppointments = () => api('/admin/appointments', A)
+export const updateAppointment = (id, patch) => api('/admin/appointments/' + id, { ...A, method: 'PATCH', body: patch })
+export const lookupAppointment = (ref, mobile) => api('/appointments/lookup', { method: 'POST', body: { ref, mobile: norm(mobile) } })
+export const cancelOwnAppointment = (ref, mobile) => api('/appointments/cancel', { method: 'POST', body: { ref, mobile: norm(mobile) } })
 
-/* ───────────── Media ───────────── */
-export async function uploadMedia(blob, meta) {
-  const id = newId('m')
-  if (hasSupabase) {
-    const path = `${meta.category || 'general'}/${id}-${(meta.name || 'image').replace(/[^\w.-]/g, '_')}`
-    const { error } = await sb.storage.from('media').upload(path, blob, { contentType: blob.type, upsert: false })
-    if (error) throw error
-    const url = sb.storage.from('media').getPublicUrl(path).data.publicUrl
-    const row = { id, path, url, alt: meta.alt || '', category: meta.category || 'general' }
-    const { error: e2 } = await sb.from('media').insert(row)
-    if (e2) throw e2
-    return row
-  }
-  const url = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(blob) })
-  const row = { id, url, alt: meta.alt || '', category: meta.category || 'general', created_at: new Date().toISOString() }
-  LS.set('ee_media', [row, ...LS.get('ee_media', [])]); return row
+/* ───────────── Media (stored in PostgreSQL) ───────────── */
+export function uploadMedia(blob, meta) {
+  return api('/media', {
+    ...A, method: 'POST', raw: blob,
+    headers: { 'Content-Type': blob.type || 'application/octet-stream', 'X-Name': encodeURIComponent(meta.name || 'file'), 'X-Alt': encodeURIComponent(meta.alt || ''), 'X-Category': encodeURIComponent(meta.category || 'general') },
+  })
 }
-export async function listMedia() {
-  if (hasSupabase) { const { data } = await sb.from('media').select('*').order('created_at', { ascending: false }); return data || [] }
-  return LS.get('ee_media', [])
-}
-export async function updateMedia(id, patch) {
-  if (hasSupabase) { await sb.from('media').update(patch).eq('id', id); return }
-  LS.set('ee_media', LS.get('ee_media', []).map((m) => (m.id === id ? { ...m, ...patch } : m)))
-}
-export async function deleteMedia(item) {
-  if (hasSupabase) { if (item.path) await sb.storage.from('media').remove([item.path]); await sb.from('media').delete().eq('id', item.id); return }
-  LS.set('ee_media', LS.get('ee_media', []).filter((m) => m.id !== item.id))
-}
+export const listMedia = () => api('/media', A)
+export const updateMedia = (id, patch) => api('/media/' + id, { ...A, method: 'PATCH', body: patch })
+export const deleteMedia = (item) => api('/media/' + item.id, { ...A, method: 'DELETE' })
 
 /* Resize / crop an image file in the browser before upload. */
 export function processImage(file, { maxWidth = 1600, aspect = null, quality = 0.85 } = {}) {
